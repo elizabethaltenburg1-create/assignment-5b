@@ -1,79 +1,75 @@
-# assignment-5b
-# Webinar Follow-Up & BDR Handoff — MVP
+# Webinar BDR Guidance App
 
-## What this app does
+A dashboard for reviewing webinar lead engagement and generating AI-backed
+BDR (Business Development Rep) follow-up guidance with Claude.
 
-After a webinar wraps, marketing normally has to manually pull attendee data,
-score leads by eye, and write BDR follow-up guidance from scratch. This app
-automates the mechanical parts of that and hands the one genuine judgment
-call — what a BDR should actually say to a given lead — to Claude.
+## Stack
 
-A marketing user opens the **Dashboard**, sees a list of completed webinars
-with registration and attendance counts, and selects one. On the
-**Webinar Details** screen they see the webinar info and its engagement
-score, then click **Generate BDR Guidance** to get Claude-written talking
-points and follow-up messaging for the BDR team, which is saved to the
-database for later reference.
+- Next.js (App Router, TypeScript, Tailwind CSS)
+- Supabase (Postgres) for storage
+- Anthropic API (Claude) for BDR guidance generation
+- Vercel for hosting + daily cron job
 
-## Live app
+## How it works
 
-[live Vercel URL here]
+- All Supabase access happens server-side (route handlers / server
+  components) using the **secret key**, which bypasses row-level security.
+  The browser never talks to Supabase directly — it only calls this app's
+  own API routes. There is no login system; treat the deployed URL as an
+  internal tool. The publishable key is documented in `.env.example` for
+  completeness but isn't currently used by any code path.
+- `GET /api/webinars` — lists all webinars.
+- `POST /api/webinars/:id/generate-guidance` — calls Claude to generate BDR
+  guidance for one webinar and saves it. Used by the dashboard's
+  **Generate BDR Guidance** button.
+- `GET /api/cron/generate-guidance` — finds webinars with no guidance yet
+  and generates it for all of them. Runs daily via Vercel Cron
+  (`vercel.json`), protected by `CRON_SECRET`.
 
-## Tech stack
+## Database setup
 
-- **Frontend/Backend:** Next.js, deployed on Vercel
-- **Database:** Supabase (Postgres)
-- **AI:** Anthropic API (Claude) for the agentic BDR guidance step
-- **Automation:** Vercel Cron (scheduled) + a serverless function (on-demand)
+Run `supabase/migrations/20260809000000_create_webinars_table.sql` in the
+Supabase SQL Editor (Project > SQL Editor) for your project. It creates the
+`webinars` table, a trigger that keeps `last_updated` current, RLS
+policies, and one sample row.
 
-## Automation split
+## Local development
 
-### Scheduled — runs once a day (Vercel Cron)
-- Imports registration and attendance data for completed webinars
-  *(simulated with seed data for this MVP — no live GoToWebinar integration)*
-- Calculates each lead's engagement score from attendance and duration attended,
-  using a fixed rule
-- Stores the results in Supabase so they're ready before anyone opens the app
+1. Copy the env template and fill in real values:
 
-This runs without a user in the loop — it's rule-based, so no judgment call
-is needed and nothing benefits from waiting on a person to trigger it.
+   ```bash
+   cp .env.example .env.local
+   ```
 
-### On-demand — triggered by a button click
-- **Generate BDR Guidance** button on the Webinar Details screen calls a
-  serverless function
-- That function sends the webinar's topic, key details, and engagement data
-  to Claude and asks it to produce BDR talking points and follow-up messaging
-- Claude's response is displayed on screen and saved to the `bdr_guidance`
-  table with a timestamp
+   | Variable | Where to find it |
+   | --- | --- |
+   | `NEXT_PUBLIC_SUPABASE_URL` | Supabase Project Settings > API > Project URL |
+   | `NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY` | Supabase Project Settings > API > Publishable key (not currently used, documented for completeness) |
+   | `SUPABASE_SECRET_KEY` | Supabase Project Settings > API > Secret key |
+   | `ANTHROPIC_API_KEY` | console.anthropic.com |
+   | `CLAUDE_MODEL` | optional, defaults to `claude-sonnet-5` |
+   | `CRON_SECRET` | any random string, e.g. `openssl rand -hex 32` |
 
-This is the one step in the workflow that isn't a fixed rule — deciding what
-messaging and talking points actually fit a given webinar and audience takes
-judgment, which is why it's the agentic step and why it's user-triggered
-rather than scheduled.
+2. Install dependencies and run the dev server:
 
-## Data model (Supabase)
+   ```bash
+   npm install
+   npm run dev
+   ```
 
-| Table | Stores |
-|---|---|
-| `webinars` | title, date, description, presenter, recording link, slide deck link |
-| `registrations` | registrant name, company, email, job title, registration date, attendance status, duration attended |
-| `leads` | engagement score, priority status, flagged, date scored, assigned BDR |
-| `bdr_guidance` | generated guidance text, date generated, linked webinar |
+3. Open http://localhost:3000 — you should see the webinar table with the
+   sample record, and can click **Generate BDR Guidance** to test the
+   Claude integration end to end.
 
-## Environment variables
+## Deploying to Vercel
 
-Required in both `.env` (local) and the Vercel dashboard:
-
-- `NEXT_PUBLIC_SUPABASE_URL`
-- `NEXT_PUBLIC_SUPABASE_ANON_KEY`
-- `SUPABASE_SERVICE_ROLE_KEY` *(backend only — never sent to the frontend)*
-- `ANTHROPIC_API_KEY` *(backend only — never sent to the frontend)*
-
-No keys are hardcoded anywhere in this repo.
-
-## Out of scope for this MVP
-
-Lead Management screen, Follow-Up Emails screen, exporting lead lists,
-Dynamics 365 integration, live GoToWebinar integration, user accounts,
-email sending, notifications, and outreach tracking. These are documented
-in the original 5A design as candidates for a future version.
+1. Import this repository into Vercel.
+2. In the Vercel project's Environment Variables settings, add the same
+   variables listed above (`NEXT_PUBLIC_SUPABASE_URL`,
+   `NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY`, `SUPABASE_SECRET_KEY`,
+   `ANTHROPIC_API_KEY`, `CRON_SECRET`, and optionally `CLAUDE_MODEL`).
+3. Deploy. `vercel.json` registers the daily cron job automatically
+   (`/api/cron/generate-guidance`, currently scheduled for 13:00 UTC —
+   edit the `schedule` field to change it).
+4. Vercel automatically sends `Authorization: Bearer $CRON_SECRET` on cron
+   requests, which the cron route checks against `CRON_SECRET`.
